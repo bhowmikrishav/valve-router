@@ -15,7 +15,7 @@ struct FunctionWorkerConfig {
     function_name: StaticName, // Must be unique for a functionDefinition.
     worker_uuid: StaticName,   // Must be unique for a worker.
     timeout: u32,              // Hard-limit timeout in ms for the function to complete.
-    traffic: u32,              // Ongoing functions exections on the Worker
+    traffic: u32,               // Ongoing functions exections on the Worker
     max_concurrency: u32,      // Maximum number of concurrent function execution on the worker.
 }
 
@@ -240,5 +240,64 @@ mod tests {
         assert_eq!(worker_config_vec[1].function_name, function_name1);
         assert_eq!(worker_config_vec[1].worker_uuid, worker_uuid1);
         // assert_eq!(worker_config_vec[1].timeout, timeout1);
+    }
+
+    #[test]
+    /// - FunctionWorkerMap sanity test for concurrent write access
+    /// - Span 8 threads to insert 1 worker_config from each thread
+    /// - The busy value of each worker_config must not be serial
+    fn test_concurrent_worker_config() {
+        use std::thread;
+        use std::sync::mpsc::{channel};
+
+        let mut function_worker_map = FunctionWorkerMap::new();
+        let (tx, rx) = channel::<FunctionWorkerConfig>();
+        let tx_clone = tx.clone();
+
+        let mut max_concurrency_inc: u32 = 0;
+        let mut threads = vec![];
+
+        for _ in 0..8 {
+            max_concurrency_inc += 1;
+
+            let function_name1: StaticName = static_name_from_str("test-function1");
+            let worker_uuid1: StaticName = static_name_from_str("test-worker1");
+            let timeout1: u32 = 10000;
+            let traffic1: u32 = 0;
+            let max_concurrency1: u32 = max_concurrency_inc;
+    
+            let worker_config: FunctionWorkerConfig = FunctionWorkerConfig {
+                function_name: function_name1,
+                worker_uuid: worker_uuid1,
+                timeout: timeout1,
+                traffic: traffic1,
+                max_concurrency: max_concurrency1,
+            };
+
+            let tx = tx_clone.clone();
+            let t = thread::spawn(move || {
+                // let mut function_worker_map = function_worker_map.lock().unwrap();
+                // function_worker_map.insert_worker_config(function_name1, worker_config);
+                tx.send(worker_config).unwrap();
+            });
+            threads.push(t);
+        }
+
+        // recive all messages
+        for i in 0..8 {
+            let res = rx.recv().unwrap();
+            println!("con {:?}", res.max_concurrency);
+            function_worker_map.insert_worker_config(res.function_name, res);
+        }
+
+        // join all threads
+        for t in threads {
+            t.join().unwrap();
+        }
+        let f_name = static_name_from_str("test-function1");
+        let worker_config_vec_option = function_worker_map.map.get(&f_name);
+        assert_eq!(worker_config_vec_option.is_some(), true);
+        let worker_config_vec = worker_config_vec_option.unwrap();
+        assert_eq!(worker_config_vec.len(), 8);
     }
 }
