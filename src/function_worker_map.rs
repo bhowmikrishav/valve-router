@@ -1,6 +1,11 @@
 use std::collections::BTreeMap;
 use std::vec::Vec;
 
+struct Error {
+    code: i32,
+    message: String,
+}
+
 type StaticName = [u8; 64];
 
 fn static_name_from_str(s: &str) -> StaticName {
@@ -24,9 +29,9 @@ impl FunctionWorkerConfig {
         FunctionWorkerConfig {
             function_name: self.function_name.clone(),
             worker_uuid: self.worker_uuid.clone(),
-            timeout: self.timeout,
-            traffic: self.traffic,
-            max_concurrency: self.max_concurrency,
+            timeout: self.timeout as u32,
+            traffic: self.traffic as u32,
+            max_concurrency: self.max_concurrency as u32,
         }
     }
 }
@@ -106,23 +111,25 @@ impl FunctionWorkerMap {
     pub fn get_least_busy_worker(
         &mut self,
         function_name: StaticName,
-    ) -> Result<FunctionWorkerConfig, LeastBusyWorkerError> {
+    ) -> Result<FunctionWorkerConfig, &str> {
         let worker_config_vec_option = self.map.get(&function_name);
         // check if any worker is mapped for the function
         if worker_config_vec_option.is_none() {
-            return Result::Err(LeastBusyWorkerError {
-                error_code: 1,
-                error_message: "No worker is mapped for the function".to_string(),
-            });
+            // return Err(LeastBusyWorkerError {
+            //     error_code: 1,
+            //     error_message: "No worker is mapped for the function".to_string(),
+            // });
+            return Err("No worker is mapped for the function");
         }
 
         let worker_config_vec = worker_config_vec_option.unwrap();
 
         if worker_config_vec.len() == 0 {
-            return Result::Err(LeastBusyWorkerError {
-                error_code: 2,
-                error_message: "No worker is mapped for the function".to_string(),
-            });
+            // return Err(LeastBusyWorkerError {
+            //     error_code: 2,
+            //     error_message: "No worker is mapped for the function".to_string(),
+            // });
+            return Err("No worker is mapped for the function");
         }
 
         // return the least busy worker
@@ -284,7 +291,7 @@ mod tests {
         }
 
         // recive all messages
-        for i in 0..8 {
+        for _ in 0..8 {
             let res = rx.recv().unwrap();
             println!("con {:?}", res.max_concurrency);
             function_worker_map.insert_worker_config(res.function_name, res);
@@ -294,10 +301,19 @@ mod tests {
         for t in threads {
             t.join().unwrap();
         }
+
         let f_name = static_name_from_str("test-function1");
         let worker_config_vec_option = function_worker_map.map.get(&f_name);
         assert_eq!(worker_config_vec_option.is_some(), true);
         let worker_config_vec = worker_config_vec_option.unwrap();
         assert_eq!(worker_config_vec.len(), 8);
+
+        let best_worker = function_worker_map.get_least_busy_worker(f_name);
+        let err = best_worker.is_err();
+        assert_eq!(err, false);
+        let ok = best_worker.is_ok();
+        assert_eq!(ok, true);
+        let r = best_worker.unwrap();
+        assert_eq!(r.max_concurrency, 8);
     }
 }
